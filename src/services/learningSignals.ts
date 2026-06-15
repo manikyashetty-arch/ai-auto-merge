@@ -37,6 +37,14 @@ export async function handleHumanPush(signal: HumanPushSignal): Promise<void> {
   if (run.outcome !== 'resolved' && run.outcome !== 'partial') return;
   if (run.commitSha === signal.newHeadSha) return; // no human commit on top yet
 
+  // Mark superseded synchronously, BEFORE any await — a merge webhook could land
+  // during the GitHub round-trip below and otherwise count this run as "accepted"
+  // while we count it as "overridden", corrupting the learning rate. A human
+  // pushed on top, so suppressing the acceptance signal is the correct call
+  // regardless of which files they touched.
+  run.superseded = true;
+  run.learningSettled = true;
+
   const octokit = await getInstallationOctokit(signal.installationId);
   const changed = await compareCommitFiles(
     octokit,
@@ -49,9 +57,7 @@ export async function handleHumanPush(signal: HumanPushSignal): Promise<void> {
 
   const overridden = overriddenFiles(run, changed);
   if (overridden.length > 0) {
-    applyOverrideSignals(repo, overridden);
-    run.superseded = true; // don't also count these as accepted at merge
-    run.learningSettled = true;
+    applyOverrideSignals(repo, overridden); // run already marked superseded above
   }
 }
 

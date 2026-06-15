@@ -126,11 +126,17 @@ export async function enqueueManualResolve(event: ManualResolveEvent): Promise<v
   const data: QueueJobData = { type: 'manual', ...event };
 
   if (!isQueueEnabled()) {
+    // GitHub redelivers issue_comment events at least once — dedup like the
+    // merged path so a duplicate delivery doesn't run two resolutions.
+    if (isDuplicate(jobId)) {
+      logger.info(`Duplicate manual-resolve delivery ${jobId}, skipping`);
+      return;
+    }
     runInProcess(jobId, data);
     return;
   }
 
-  await getQueue().add(QUEUE_NAME, data, { jobId });
+  await getQueue().add(QUEUE_NAME, data, { jobId, deduplication: { id: jobId } });
   logger.info(`Enqueued manual resolve job ${jobId}`);
 }
 

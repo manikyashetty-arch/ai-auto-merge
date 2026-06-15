@@ -117,62 +117,83 @@ interface OpenAIResponse {
   usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } };
 }
 
+const OPENAI_MAX_ATTEMPTS = 3;
+const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 529]);
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 async function openaiComplete(opts: CompleteOpts): Promise<LlmResult> {
   const model = opts.tier === 'resolve' ? config.openai.model : config.openai.judgeModel;
   const userContent = opts.blocks.map((b) => b.text).join('\n\n');
+  const body = JSON.stringify({
+    model,
+    max_tokens: opts.maxTokens,
+    // JSON mode — our system prompts already instruct "Return JSON only",
+    // which the API requires when this is set.
+    response_format: { type: 'json_object' },
+    messages: [
+      { role: 'system', content: opts.system },
+      { role: 'user', content: userContent },
+    ],
+  });
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 120_000);
-  try {
-    const res = await fetch(`${config.openai.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        authorization: `Bearer ${config.openai.apiKey}`,
-      },
-      body: JSON.stringify({
+  // The Anthropic SDK retries 429/5xx automatically; raw fetch does not, so we
+  // mirror that here (respecting Retry-After) — a transient overload should not
+  // bounce a resolution to a human.
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= OPENAI_MAX_ATTEMPTS; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 120_000);
+    try {
+      const res = await fetch(`${config.openai.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${config.openai.apiKey}` },
+        body,
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        if (RETRYABLE_STATUS.has(res.status) && attempt < OPENAI_MAX_ATTEMPTS) {
+          const retryAfter = Number(res.headers.get('retry-after'));
+          const delay = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 500 * 2 ** (attempt - 1);
+          logger.warn(`OpenAI ${res.status}, retrying in ${delay}ms (attempt ${attempt}/${OPENAI_MAX_ATTEMPTS})`);
+          await sleep(delay);
+          continue;
+        }
+        const errBody = await res.text().catch(() => '');
+        throw new Error(`OpenAI ${res.status}: ${errBody.slice(0, 300)}`);
+      }
+
+      const data = (await res.json()) as OpenAIResponse;
+      const text = data.choices?.[0]?.message?.content;
+      if (typeof text !== 'string' || text.length === 0) {
+        throw new Error('OpenAI response had no message content');
+      }
+      const u = data.usage ?? {};
+      return {
+        text,
+        usage: {
+          input_tokens: u.prompt_tokens ?? 0,
+          output_tokens: u.completion_tokens ?? 0,
+          cache_read_input_tokens: u.prompt_tokens_details?.cached_tokens ?? 0,
+          cache_creation_input_tokens: 0,
+        },
         model,
-        max_tokens: opts.maxTokens,
-        // JSON mode — our system prompts already instruct "Return JSON only",
-        // which the API requires when this is set.
-        response_format: { type: 'json_object' },
-        messages: [
-          { role: 'system', content: opts.system },
-          { role: 'user', content: userContent },
-        ],
-      }),
-      signal: controller.signal,
-    });
-
-    if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      throw new Error(`OpenAI ${res.status}: ${body.slice(0, 300)}`);
+        truncated: data.choices?.[0]?.finish_reason === 'length',
+      };
+    } catch (err) {
+      lastErr = err;
+      if (err instanceof Error && err.name === 'AbortError') {
+        logger.warn(`OpenAI request timed out after 120s (attempt ${attempt}/${OPENAI_MAX_ATTEMPTS})`);
+        if (attempt < OPENAI_MAX_ATTEMPTS) {
+          await sleep(500 * 2 ** (attempt - 1));
+          continue;
+        }
+        throw new Error('OpenAI request timed out');
+      }
+      throw err; // non-retryable (e.g. 400/401/413, bad JSON)
+    } finally {
+      clearTimeout(timer);
     }
-
-    const data = (await res.json()) as OpenAIResponse;
-    const text = data.choices?.[0]?.message?.content;
-    if (typeof text !== 'string' || text.length === 0) {
-      throw new Error('OpenAI response had no message content');
-    }
-    const u = data.usage ?? {};
-    return {
-      text,
-      usage: {
-        input_tokens: u.prompt_tokens ?? 0,
-        output_tokens: u.completion_tokens ?? 0,
-        cache_read_input_tokens: u.prompt_tokens_details?.cached_tokens ?? 0,
-        cache_creation_input_tokens: 0,
-      },
-      model,
-      truncated: data.choices?.[0]?.finish_reason === 'length',
-    };
-  } catch (err) {
-    if (err instanceof Error && err.name === 'AbortError') {
-      logger.warn('OpenAI request timed out after 120s');
-      throw new Error('OpenAI request timed out');
-    }
-    throw err;
-  } finally {
-    clearTimeout(timer);
   }
+  throw lastErr instanceof Error ? lastErr : new Error('OpenAI request failed');
 }

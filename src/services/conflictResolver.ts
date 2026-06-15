@@ -164,7 +164,11 @@ async function resolveWithAI(
 
   const proposalA = await runProposal(classified, prContext, STRATEGIES[0], usage);
 
-  if (config.llm.resolutionMode === 'adaptive' && !proposalA.needs_review) {
+  // A deletion is destructive and the verifier (which only checks "no markers /
+  // intent preserved") trivially passes an empty file — so never auto-apply a
+  // delete from a single proposal. Force the dual-strategy path, which only
+  // deletes when both strategies independently agree.
+  if (config.llm.resolutionMode === 'adaptive' && !proposalA.needs_review && !proposalA.is_delete) {
     const verdict = await verifyProposal(file, proposalA.content, usage);
     if (verdict.ok && verdict.confidence !== 'low' && proposalA.confidence !== 'low') {
       logger.debug(`${file.path}: single proposal verified (${verdict.confidence}) — shipping`);
@@ -199,6 +203,30 @@ async function reconcile(
       content: file.content,
       confidence: 'low',
       explanation: `Both resolution proposals failed: ${proposalA.explanation}`,
+      needsReview: true,
+      method: 'ai_failed',
+    };
+  }
+
+  // Deletions are destructive: only auto-apply when BOTH strategies independently
+  // chose to delete. Any disagreement on deleting goes to a human.
+  if (proposalA.is_delete || proposalB.is_delete) {
+    if (proposalA.is_delete && proposalB.is_delete) {
+      return {
+        path: file.path,
+        content: '',
+        confidence: 'high',
+        explanation: 'Both strategies independently agreed to delete this file.',
+        needsReview: false,
+        isDelete: true,
+        method: 'ai_converged',
+      };
+    }
+    return {
+      path: file.path,
+      content: file.content,
+      confidence: 'low',
+      explanation: 'Strategies disagreed on whether to delete this file — needs human review.',
       needsReview: true,
       method: 'ai_failed',
     };

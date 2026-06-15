@@ -92,36 +92,87 @@ function extractDeclaredName(line: string): string | null {
   return null;
 }
 
-// ─── Conflict block parser ─────────────────────────────────────────────────────
+// ─── Conflict segmentation ───────────────────────────────────────────────────
+// One line-based parser, used by BOTH classification and the deterministic
+// splicers, so they can never disagree on where a conflict starts/ends. It is
+// CRLF-safe (markers detected on the \r-stripped line, original lines kept
+// verbatim for reconstruction) and diff3-aware (the `|||||||` ancestor section
+// is recognized; its presence forces the AI path). Git markers are exactly 7
+// characters followed by end-of-line or whitespace — and a `=======` line only
+// counts as a separator *inside* a conflict, so it never collides with a
+// Markdown heading underline in ordinary text.
 
-function parseConflictBlocks(content: string): ConflictBlock[] {
-  const blocks: ConflictBlock[] = [];
+type Segment = { kind: 'text'; lines: string[] } | { kind: 'conflict'; head: string[]; base: string[] };
+
+const RE_START = /^<{7}(?=$|\s)/;
+const RE_ANCESTOR = /^\|{7}(?=$|\s)/;
+const RE_SEP = /^={7}(?=$|\s)/;
+const RE_END = /^>{7}(?=$|\s)/;
+
+interface ParseResult {
+  segments: Segment[];
+  blocks: ConflictBlock[];
+  hasAncestor: boolean;
+  malformed: boolean;
+}
+
+function parseSegments(content: string): ParseResult {
   const lines = content.split('\n');
+  const segments: Segment[] = [];
+  const blocks: ConflictBlock[] = [];
+  let hasAncestor = false;
+  let malformed = false;
 
-  let inHead = false;
-  let inBase = false;
-  let headLines: string[] = [];
-  let baseLines: string[] = [];
+  let text: string[] = [];
+  let head: string[] = [];
+  let base: string[] = [];
+  let state: 'text' | 'head' | 'ancestor' | 'base' = 'text';
 
-  for (const line of lines) {
-    if (line.startsWith('<<<<<<< ')) {
-      inHead = true;
-      headLines = [];
-    } else if (line.startsWith('=======') && inHead) {
-      inHead = false;
-      inBase = true;
-      baseLines = [];
-    } else if (line.startsWith('>>>>>>> ') && inBase) {
-      inBase = false;
-      blocks.push({ head: headLines, base: baseLines });
-    } else if (inHead) {
-      headLines.push(line);
-    } else if (inBase) {
-      baseLines.push(line);
+  const flushText = () => {
+    if (text.length) segments.push({ kind: 'text', lines: text });
+    text = [];
+  };
+
+  for (const raw of lines) {
+    const m = raw.replace(/\r$/, '');
+    if (state === 'text') {
+      if (RE_START.test(m)) {
+        flushText();
+        head = [];
+        base = [];
+        state = 'head';
+      } else {
+        text.push(raw);
+      }
+    } else if (state === 'head') {
+      if (RE_ANCESTOR.test(m)) {
+        hasAncestor = true;
+        state = 'ancestor';
+      } else if (RE_SEP.test(m)) {
+        state = 'base';
+      } else if (RE_END.test(m)) {
+        malformed = true; // end marker before a separator
+        state = 'text';
+      } else {
+        head.push(raw);
+      }
+    } else if (state === 'ancestor') {
+      if (RE_SEP.test(m)) state = 'base';
+      // ancestor (diff3 common base) lines are intentionally dropped
+    } else if (state === 'base') {
+      if (RE_END.test(m)) {
+        segments.push({ kind: 'conflict', head, base });
+        blocks.push({ head, base });
+        state = 'text';
+      } else {
+        base.push(raw);
+      }
     }
   }
 
-  return blocks;
+  if (state !== 'text') malformed = true; // unterminated conflict
+  flushText();
+  return { segments, blocks, hasAncestor, malformed };
 }
 
 // ─── Conflict type classification ──────────────────────────────────────────────
@@ -131,7 +182,7 @@ function classifyBlocks(blocks: ConflictBlock[], isDeleteConflict: boolean): Con
   if (blocks.length === 0) return 'complex_modify';
 
   // Check: all conflict lines are import statements
-  const allLines = blocks.flatMap((b) => [...b.head, ...b.base]).filter((l) => l.trim());
+  const allLines = blocks.flatMap((b) => [...b.head, ...b.base]).map((l) => l.replace(/\r$/, '')).filter((l) => l.trim());
   if (allLines.length > 0 && allLines.every(isImportLine)) {
     return 'import_only';
   }
@@ -156,32 +207,46 @@ function classifyBlocks(blocks: ConflictBlock[], isDeleteConflict: boolean): Con
 }
 
 export function classify(file: ConflictedFile): ClassifiedConflict {
-  const blocks = parseConflictBlocks(file.content);
-  // Lockfiles take precedence over everything — even delete/modify conflicts
-  // on a lockfile should be regenerated, not merged.
-  const type = isLockfile(file.path) ? 'lockfile' : classifyBlocks(blocks, file.isDeleteConflict ?? false);
+  const { blocks, hasAncestor, malformed } = parseSegments(file.content);
+  let type: ConflictType;
+  if (isLockfile(file.path)) {
+    // Lockfiles take precedence over everything — even delete/modify conflicts
+    // on a lockfile should be regenerated, not merged.
+    type = 'lockfile';
+  } else if (hasAncestor || malformed) {
+    // diff3/zdiff3 conflicts and any malformed marker structure are genuine
+    // three-way conflicts — never fast-path them; let the AI handle it.
+    type = 'complex_modify';
+  } else {
+    type = classifyBlocks(blocks, file.isDeleteConflict ?? false);
+  }
   return { file, type, blocks };
 }
 
 // ─── Deterministic resolvers ───────────────────────────────────────────────────
+// Both reconstruct from segments, copying every non-conflict line verbatim — so
+// surrounding code can never be dropped or reflowed, and CRLF / trailing-newline
+// state is preserved.
+
+function reconstruct(content: string, mergeConflict: (head: string[], base: string[]) => string[]): string {
+  const { segments } = parseSegments(content);
+  const out: string[] = [];
+  for (const seg of segments) {
+    if (seg.kind === 'text') out.push(...seg.lines);
+    else out.push(...mergeConflict(seg.head, seg.base));
+  }
+  return out.join('\n');
+}
 
 export function resolveAdditive(classified: ClassifiedConflict): string {
-  return classified.file.content.replace(
-    /<<<<<<< [^\n]+\n([\s\S]*?)=======\n([\s\S]*?)>>>>>>> [^\n]+\n?/g,
-    (_match, head, base) => head + base
-  );
+  return reconstruct(classified.file.content, (head, base) => [...head, ...base]);
 }
 
 export function resolveImports(classified: ClassifiedConflict): string {
-  return classified.file.content.replace(
-    /<<<<<<< [^\n]+\n([\s\S]*?)=======\n([\s\S]*?)>>>>>>> [^\n]+\n?/g,
-    (_match, head, base) => {
-      const headLines = head.split('\n').filter((l: string) => l.trim());
-      const baseLines = base.split('\n').filter((l: string) => l.trim());
-      const merged = mergeImportLines([...headLines, ...baseLines]);
-      return merged.join('\n') + '\n';
-    }
-  );
+  return reconstruct(classified.file.content, (head, base) => {
+    const lines = [...head, ...base].map((l) => l.replace(/\r$/, '')).filter((l) => l.trim());
+    return mergeImportLines(lines);
+  });
 }
 
 // Merge JS/TS named imports from the same module; fall back to line-level dedup

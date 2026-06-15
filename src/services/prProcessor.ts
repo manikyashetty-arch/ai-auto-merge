@@ -181,8 +181,11 @@ async function resolveWithRun(
   octokit: Awaited<ReturnType<typeof getInstallationOctokit>>,
   run: RunRecord
 ): Promise<void> {
-  // Load per-repo config from .auto-merge.yml (falls back to global defaults)
-  const repoConfig = await getRepoConfig(octokit, pr.repoOwner, pr.repoName, pr.headRef);
+  // Load per-repo config from .auto-merge.yml on the BASE branch — never the PR
+  // head. The config governs the bot's own safety policy (confidence threshold,
+  // dryRun, auto-merge), so reading it from the attacker-controllable head ref
+  // would let a malicious PR lower the bot's guardrails against itself.
+  const repoConfig = await getRepoConfig(octokit, pr.repoOwner, pr.repoName, pr.baseRef);
 
   if (!repoConfig.enabled) {
     logger.info(`ai-auto-merge disabled for ${pr.repoOwner}/${pr.repoName}, skipping`);

@@ -218,6 +218,28 @@ describe('edge-case guards', () => {
     expect(results[0].needsReview).toBe(true);
     expect(results[0].method).toBe('ai_failed');
   });
+
+  it('never auto-applies a deletion from a single verified proposal (escalates instead)', async () => {
+    // A says delete; even with a passing verifier it must escalate to dual-strategy.
+    mockFinalMessage
+      .mockResolvedValueOnce(makeClaudeResponse({ is_delete: true, resolved_content: '' }))
+      .mockResolvedValueOnce(makeClaudeResponse({ is_delete: false, resolved_content: 'kept code' }));
+    mockCreate.mockResolvedValue(verifyOk());
+    const results = await resolveConflicts([COMPLEX_FILE], 'feat', null, 'feat', 'main');
+    expect(mockFinalMessage).toHaveBeenCalledTimes(2); // escalated, did not ship the delete
+    // A wants delete, B wants keep → disagreement → needs review, NOT deleted
+    expect(results[0].needsReview).toBe(true);
+    expect(results[0].isDelete).not.toBe(true);
+  });
+
+  it('only deletes when BOTH strategies independently agree to delete', async () => {
+    mockFinalMessage.mockResolvedValue(makeClaudeResponse({ is_delete: true, resolved_content: '' }));
+    mockCreate.mockResolvedValue(verifyOk());
+    const results = await resolveConflicts([COMPLEX_FILE], 'feat', null, 'feat', 'main');
+    expect(results[0].isDelete).toBe(true);
+    expect(results[0].needsReview).toBe(false);
+    expect(results[0].method).toBe('ai_converged');
+  });
 });
 
 describe('lockfile conflicts', () => {

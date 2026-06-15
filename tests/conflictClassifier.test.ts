@@ -128,6 +128,35 @@ describe('lockfile detection', () => {
   });
 });
 
+describe('CRLF and diff3 handling (regression)', () => {
+  it('resolves an additive conflict in a CRLF file (no markers left, both kept, CRLF preserved)', () => {
+    const crlf = ['<<<<<<< HEAD', 'function fromPR() {}', '=======', 'function fromMain() {}', '>>>>>>> MERGE_HEAD'].join('\r\n') + '\r\n';
+    const classified = classify(makeFile(crlf));
+    expect(classified.type).toBe('additive');
+    const resolved = resolveAdditive(classified);
+    expect(resolved).toContain('fromPR');
+    expect(resolved).toContain('fromMain');
+    expect(resolved).not.toMatch(/<<<<<<<|>>>>>>>/);
+    expect(resolved).toContain('\r'); // CRLF line endings preserved
+  });
+
+  it('routes a diff3 (|||||||  ancestor) conflict to the AI path, never a fast splice', () => {
+    const diff3 = ['function f() {', '<<<<<<< HEAD', '  return 1;', '||||||| base', '  return 0;', '=======', '  return 2;', '>>>>>>> branch', '}'].join('\n');
+    expect(classify(makeFile(diff3)).type).toBe('complex_modify');
+  });
+
+  it('routes a malformed/unterminated conflict to the AI path', () => {
+    const bad = ['<<<<<<< HEAD', 'a', '=======', 'b'].join('\n'); // no closing >>>>>>>
+    expect(classify(makeFile(bad)).type).toBe('complex_modify');
+  });
+
+  it('preserves surrounding text and trailing newline exactly', () => {
+    const resolved = resolveAdditive(classify(makeFile(ADDITIVE_CONTENT)));
+    expect(resolved).toContain('function existingFn()');
+    expect(resolved).toContain('export { existingFn }');
+  });
+});
+
 describe('resolveImports()', () => {
   it('merges and deduplicates import lines', () => {
     const classified = classify(makeFile(IMPORT_CONTENT));
