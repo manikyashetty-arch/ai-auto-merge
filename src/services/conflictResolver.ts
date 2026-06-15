@@ -89,6 +89,19 @@ async function resolveFile(
 
     case 'delete_modify':
     case 'complex_modify': {
+      // Binary/non-text files: a NUL byte means git left binary content (it does
+      // not produce textual conflict markers for binaries). Sending it to the
+      // model wastes tokens and can't produce a valid merge — flag for a human.
+      if (/\u0000/.test(file.content)) {
+        return {
+          path: file.path,
+          content: file.content,
+          confidence: 'low',
+          explanation: 'Binary or non-text file — cannot be AI-merged. Resolve manually (e.g. pick one side).',
+          needsReview: true,
+          method: 'binary',
+        };
+      }
       const bytes = Buffer.byteLength(file.content, 'utf-8');
       if (bytes > config.settings.maxFileBytes) {
         const kb = Math.round(bytes / 1024);
@@ -264,6 +277,12 @@ async function runProposal(
     recordUsage(usage, result.model, result.usage);
     metrics.claudeCalls.inc({ model: result.model, outcome: 'ok' });
 
+    // A truncated response is a partial file — applying it would silently delete
+    // everything past the cutoff. Never trust it; force review instead.
+    if (result.truncated) {
+      throw new Error('resolution hit the output token limit (truncated) — not safe to apply');
+    }
+
     const parsed = parseResolverResponse(result.text);
     return {
       id: strategy.id,
@@ -363,6 +382,8 @@ export async function repairResolution(
     recordUsage(usage, result.model, result.usage);
     metrics.claudeCalls.inc({ model: result.model, outcome: 'ok' });
 
+    if (result.truncated) throw new Error('repair truncated at the output limit');
+
     const json = extractJson(result.text) as { resolved_content?: unknown };
     if (typeof json?.resolved_content !== 'string' || json.resolved_content.length === 0) {
       throw new Error('Repair response missing resolved_content');
@@ -396,8 +417,12 @@ function parseResolverResponse(text: string): RawResolverResponse {
 function isValidResolverResponse(obj: unknown): obj is RawResolverResponse {
   if (typeof obj !== 'object' || obj === null) return false;
   const r = obj as Record<string, unknown>;
+  // Empty resolved_content is only valid for a deletion — otherwise applying it
+  // would blank the file. Reject empty/whitespace content for non-deletes.
+  const contentOk =
+    typeof r.resolved_content === 'string' && (r.is_delete === true || r.resolved_content.trim().length > 0);
   return (
-    typeof r.resolved_content === 'string' &&
+    contentOk &&
     (r.confidence === 'high' || r.confidence === 'medium' || r.confidence === 'low') &&
     typeof r.explanation === 'string' &&
     typeof r.needs_review === 'boolean'

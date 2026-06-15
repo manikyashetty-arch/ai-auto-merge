@@ -35,6 +35,7 @@ export const config = {
     maxFileBytes: 262_144,
     queueConcurrency: 3,
     inProcessConcurrency: 2,
+    prConcurrency: 3,
   },
   learning: {
     enabled: true,

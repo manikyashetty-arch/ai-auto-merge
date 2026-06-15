@@ -186,6 +186,40 @@ describe('complex modify-modify conflict (adaptive)', () => {
   });
 });
 
+describe('edge-case guards', () => {
+  beforeEach(() => {
+    mockFinalMessage.mockReset();
+    mockCreate.mockReset();
+  });
+
+  it('flags binary/non-text files and never calls the model', async () => {
+    const binary: ConflictedFile = { path: 'logo.png', content: 'PNG\u0000\u0000binary\u0000data here' };
+    const results = await resolveConflicts([binary], 'feat', null, 'feat', 'main');
+    expect(mockFinalMessage).not.toHaveBeenCalled();
+    expect(results[0].method).toBe('binary');
+    expect(results[0].needsReview).toBe(true);
+  });
+
+  it('rejects a truncated resolution rather than applying a partial file', async () => {
+    // Proposal A truncated, then escalates; B also truncated → ai_failed.
+    mockFinalMessage.mockResolvedValue({
+      stop_reason: 'max_tokens',
+      content: [{ type: 'text', text: JSON.stringify({ resolved_content: 'half a fi', confidence: 'high', explanation: 'x', needs_review: false }) }],
+    });
+    const results = await resolveConflicts([COMPLEX_FILE], 'feat', null, 'feat', 'main');
+    expect(results[0].needsReview).toBe(true);
+    expect(results[0].method).toBe('ai_failed');
+    expect(results[0].content).not.toBe('half a fi'); // truncated content never applied
+  });
+
+  it('rejects an empty resolved_content for a non-delete', async () => {
+    mockFinalMessage.mockResolvedValue(makeClaudeResponse({ resolved_content: '   ', is_delete: false }));
+    const results = await resolveConflicts([COMPLEX_FILE], 'feat', null, 'feat', 'main');
+    expect(results[0].needsReview).toBe(true);
+    expect(results[0].method).toBe('ai_failed');
+  });
+});
+
 describe('lockfile conflicts', () => {
   beforeEach(() => mockFinalMessage.mockReset());
 

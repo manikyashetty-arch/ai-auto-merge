@@ -24,6 +24,7 @@ export type ResolutionMethod =
   | 'fast_imports'
   | 'lockfile'
   | 'oversize'
+  | 'binary'
   | 'ai_verified'
   | 'ai_converged'
   | 'ai_judged'

@@ -43,4 +43,18 @@ function broken( {
     const result = await checkSyntax('README.md', content, REPO_DIR);
     expect(result.valid).toBe(true);
   });
+
+  it('does NOT flag a Markdown heading underline of equals signs', async () => {
+    // `=======` on its own line is a Setext heading underline, not a conflict.
+    const content = `Title\n=======\n\nBody text with no real conflict.\n`;
+    const result = await checkSyntax('docs/page.md', content, REPO_DIR);
+    expect(result.valid).toBe(true);
+  });
+
+  it('still flags genuine unresolved conflicts (angle-bracket markers)', async () => {
+    const content = `a\n<<<<<<< HEAD\nb\n=======\nc\n>>>>>>> branch\n`;
+    const result = await checkSyntax('docs/page.md', content, REPO_DIR);
+    expect(result.valid).toBe(false);
+    expect(result.error).toMatch(/conflict marker/i);
+  });
 });

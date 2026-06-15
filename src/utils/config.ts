@@ -121,6 +121,8 @@ export const config = {
     queueConcurrency: intEnv('QUEUE_CONCURRENCY', 3),
     /** Concurrent PR-merge events processed in-process when Redis is absent. */
     inProcessConcurrency: intEnv('INPROCESS_CONCURRENCY', 2),
+    /** Max conflicted PRs resolved in parallel per merge (bounds a merge storm). */
+    prConcurrency: intEnv('PR_CONCURRENCY', 3),
   },
   /**
    * Adaptive learning: the bot watches whether humans accept or override its

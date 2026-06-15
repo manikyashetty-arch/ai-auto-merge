@@ -10,7 +10,12 @@ export interface SyntaxCheckResult {
   error?: string;
 }
 
-const CONFLICT_MARKER = /^(<{7}|={7}|>{7})/m;
+// Require the angle-bracket markers (`<<<<<<< ` / `>>>>>>> `), which carry a
+// trailing label and effectively never occur in real code or docs. We do NOT
+// flag a lone `=======` line on its own — that collides with Markdown heading
+// underlines and RST/AsciiDoc rules, and a genuine unresolved conflict always
+// includes the angle-bracket markers anyway.
+const CONFLICT_MARKER = /^(<{7}|>{7})[ \t]/m;
 
 export async function checkSyntax(
   filePath: string,

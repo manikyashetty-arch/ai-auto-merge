@@ -229,10 +229,33 @@ export async function commitAndPush(
   const log = await ctx.git.log({ maxCount: 1 });
   const commitSha = log.latest?.hash || '';
 
-  await ctx.git.push('origin', `HEAD:refs/heads/${branch}`, ['--force-with-lease']);
+  try {
+    // --force-with-lease: if the author pushed to this branch after we cloned,
+    // the lease is stale and git REJECTS the push. That is the intended safety
+    // valve — we never overwrite work that landed during resolution.
+    await ctx.git.push('origin', `HEAD:refs/heads/${branch}`, ['--force-with-lease']);
+  } catch (err) {
+    if (isStaleLeaseError(err)) {
+      throw new ConcurrentPushError(branch);
+    }
+    throw err;
+  }
   logger.info(`Pushed resolved conflicts to ${branch} (${commitSha})`);
 
   return commitSha;
+}
+
+/** The branch moved under us (someone pushed during resolution); we declined to overwrite. */
+export class ConcurrentPushError extends Error {
+  constructor(branch: string) {
+    super(`Branch "${branch}" changed during resolution; declined to force-push over it.`);
+    this.name = 'ConcurrentPushError';
+  }
+}
+
+function isStaleLeaseError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /stale info|force-with-lease|non-fast-forward|\[rejected\]|fetch first/i.test(msg);
 }
 
 export async function abortMerge(ctx: GitContext): Promise<void> {

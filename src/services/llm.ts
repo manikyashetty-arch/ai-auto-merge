@@ -33,6 +33,8 @@ export interface LlmResult {
   text: string;
   usage: ApiUsageLike;
   model: string;
+  /** True if the model hit the output ceiling — the text is truncated and must not be applied. */
+  truncated: boolean;
 }
 
 export function activeModels(): { resolve: string; judge: string; provider: string } {
@@ -81,7 +83,7 @@ async function anthropicComplete(opts: CompleteOpts): Promise<LlmResult> {
       messages: [{ role: 'user', content }],
     });
     const message = await stream.finalMessage();
-    return { text: extractText(message.content), usage: usageOf(message), model };
+    return { text: extractText(message.content), usage: usageOf(message), model, truncated: isTruncated(message) };
   }
 
   const response = await anthropic().messages.create({
@@ -90,7 +92,11 @@ async function anthropicComplete(opts: CompleteOpts): Promise<LlmResult> {
     system: opts.system,
     messages: [{ role: 'user', content }],
   });
-  return { text: extractText(response.content), usage: usageOf(response), model };
+  return { text: extractText(response.content), usage: usageOf(response), model, truncated: isTruncated(response) };
+}
+
+function isTruncated(message: unknown): boolean {
+  return (message as { stop_reason?: string }).stop_reason === 'max_tokens';
 }
 
 function extractText(content: unknown): string {
@@ -107,7 +113,7 @@ function usageOf(message: unknown): ApiUsageLike {
 // ─── OpenAI (chat completions, JSON mode, dependency-free via fetch) ─────────────
 
 interface OpenAIResponse {
-  choices?: Array<{ message?: { content?: string } }>;
+  choices?: Array<{ message?: { content?: string }; finish_reason?: string }>;
   usage?: { prompt_tokens?: number; completion_tokens?: number; prompt_tokens_details?: { cached_tokens?: number } };
 }
 
@@ -158,6 +164,7 @@ async function openaiComplete(opts: CompleteOpts): Promise<LlmResult> {
         cache_creation_input_tokens: 0,
       },
       model,
+      truncated: data.choices?.[0]?.finish_reason === 'length',
     };
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {

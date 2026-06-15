@@ -8,7 +8,7 @@ import {
   enableAutoMerge,
   getPRDiff,
 } from './github';
-import { prepareConflictWorkspace, applyResolutions, commitAndPush, abortMerge } from './gitOps';
+import { prepareConflictWorkspace, applyResolutions, commitAndPush, abortMerge, ConcurrentPushError } from './gitOps';
 import { resolveConflicts, repairResolution } from './conflictResolver';
 import { getRepoConfig } from './repoConfig';
 import { checkSyntax } from './syntaxCheck';
@@ -22,6 +22,8 @@ import {
   buildErrorComment,
 } from './comments';
 import { logger } from '../utils/logger';
+import { config } from '../utils/config';
+import { mapLimit } from '../utils/async';
 import {
   ManualResolveEvent,
   MergedPREvent,
@@ -82,13 +84,14 @@ export async function processMergedPR(event: MergedPREvent): Promise<void> {
     mergedBy: event.mergedBy,
   };
 
-  await Promise.allSettled(
-    conflictedPRs.map((pr) =>
-      withPRLock(`${pr.repoOwner}/${pr.repoName}#${pr.number}`, () =>
-        resolveConflictsForPR(pr, trigger)
-      ).catch((err) => {
+  // Bound fan-out: a merge into a busy branch can conflict with many PRs at
+  // once, and each resolution clones a repo + makes AI calls. Unbounded
+  // parallelism would exhaust disk/sockets and trip GitHub/LLM rate limits.
+  await mapLimit(conflictedPRs, config.settings.prConcurrency, (pr) =>
+    withPRLock(`${pr.repoOwner}/${pr.repoName}#${pr.number}`, () => resolveConflictsForPR(pr, trigger)).catch(
+      (err) => {
         logger.error(`Failed to process PR #${pr.number}:`, err);
-      })
+      }
     )
   );
 }
@@ -150,6 +153,15 @@ async function resolveConflictsForPR(
   try {
     await resolveWithRun(pr, trigger, opts, octokit, run);
   } catch (err) {
+    // The author pushed during resolution — git refused the force-with-lease.
+    // This is success of the safety valve, not a failure: leave their work alone.
+    if (err instanceof ConcurrentPushError) {
+      logger.info(`PR #${pr.number}: ${err.message} (left untouched)`);
+      finishRun(run, 'skipped', err.message);
+      await createCommitStatus(octokit, pr.repoOwner, pr.repoName, pr.headSha, 'success',
+        'Branch changed during resolution — left your changes untouched').catch(() => undefined);
+      return;
+    }
     finishRun(run, 'error', err instanceof Error ? err.message : String(err));
     logger.error(`PR #${pr.number}: unexpected error during resolution:`, err);
     await createCommitStatus(octokit, pr.repoOwner, pr.repoName, pr.headSha, 'error',
