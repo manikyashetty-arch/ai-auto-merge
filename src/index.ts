@@ -13,9 +13,13 @@ async function main(): Promise<void> {
   const app = createApp();
   startWorker();
 
+  const models = config.llm.provider === 'openai'
+    ? `${config.openai.model} (judge: ${config.openai.judgeModel})`
+    : `${config.anthropic.model} (judge: ${config.anthropic.judgeModel})`;
+
   server = app.listen(config.server.port, () => {
     logger.info(`ai-auto-merge listening on port ${config.server.port} [${config.server.nodeEnv}]`);
-    logger.info(`Model: ${config.anthropic.model} (judge: ${config.anthropic.judgeModel})`);
+    logger.info(`LLM: ${config.llm.provider} — ${models}`);
     logger.info(`Queue: ${isQueueEnabled() ? `BullMQ (${process.env.REDIS_URL})` : 'disabled — in-process fallback active'}`);
     logger.info('Webhook endpoint: POST /webhook');
     logger.info('Health check:     GET  /health');

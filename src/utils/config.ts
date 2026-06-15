@@ -21,26 +21,48 @@ function floatEnv(key: string, fallback: number): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
+// Which LLM backend the resolver speaks to. Only the selected provider's key
+// is required at boot — so an OpenAI deployment doesn't need an Anthropic key
+// and vice-versa.
+const llmProvider = (process.env.LLM_PROVIDER || 'anthropic').toLowerCase() as 'anthropic' | 'openai';
+
+function providerKey(provider: 'anthropic' | 'openai', envKey: string): string {
+  return llmProvider === provider ? requireEnv(envKey) : process.env[envKey] || '';
+}
+
 export const config = {
   github: {
     appId: parseInt(requireEnv('GITHUB_APP_ID'), 10),
     privateKey: requireEnv('GITHUB_PRIVATE_KEY').replace(/\\n/g, '\n'),
     webhookSecret: requireEnv('GITHUB_WEBHOOK_SECRET'),
   },
-  anthropic: {
-    apiKey: requireEnv('ANTHROPIC_API_KEY'),
-    /** Model used for conflict resolution proposals. Must support adaptive thinking for best results. */
-    model: process.env.ANTHROPIC_MODEL || 'claude-opus-4-8',
-    /** Cheaper model used to judge/verify resolutions. */
-    judgeModel: process.env.ANTHROPIC_JUDGE_MODEL || 'claude-haiku-4-5',
-    /** Effort for resolution/repair calls — lower spends fewer thinking tokens. */
-    effort: (process.env.ANTHROPIC_EFFORT || 'medium') as 'low' | 'medium' | 'high' | 'max',
+  llm: {
+    /** 'anthropic' (Claude, native) or 'openai'. */
+    provider: llmProvider,
     /**
      * adaptive: one proposal + a cheap verifier, escalating to dual-strategy +
      * judge only on doubt (default, most token-efficient).
      * thorough: always run both strategies + judge (highest assurance, ~2x cost).
      */
     resolutionMode: (process.env.RESOLUTION_MODE || 'adaptive') as 'adaptive' | 'thorough',
+  },
+  anthropic: {
+    apiKey: providerKey('anthropic', 'ANTHROPIC_API_KEY'),
+    /** Model used for conflict resolution proposals. Must support adaptive thinking for best results. */
+    model: process.env.ANTHROPIC_MODEL || 'claude-opus-4-8',
+    /** Cheaper model used to judge/verify resolutions. */
+    judgeModel: process.env.ANTHROPIC_JUDGE_MODEL || 'claude-haiku-4-5',
+    /** Effort for resolution/repair calls — lower spends fewer thinking tokens. */
+    effort: (process.env.ANTHROPIC_EFFORT || 'medium') as 'low' | 'medium' | 'high' | 'max',
+  },
+  openai: {
+    apiKey: providerKey('openai', 'OPENAI_API_KEY'),
+    /** Model for resolution proposals (any chat-completions model your key can use). */
+    model: process.env.OPENAI_MODEL || 'gpt-4o',
+    /** Cheaper model for the verifier and judge. */
+    judgeModel: process.env.OPENAI_JUDGE_MODEL || 'gpt-4o-mini',
+    /** Override for Azure OpenAI or OpenAI-compatible gateways. */
+    baseUrl: process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1',
   },
   server: {
     port: intEnv('PORT', 3000),

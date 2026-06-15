@@ -191,9 +191,15 @@ Set `DASHBOARD_TOKEN` in production; these endpoints then require `Authorization
 | `GITHUB_PRIVATE_KEY` | required | App private key PEM (use `\n` for newlines) |
 | `GITHUB_WEBHOOK_SECRET` | required | Webhook signature secret |
 | `ANTHROPIC_API_KEY` | required | Anthropic API key |
+| `LLM_PROVIDER` | `anthropic` | `anthropic` (Claude, native) or `openai` |
+| `ANTHROPIC_API_KEY` | required if provider=anthropic | Anthropic key |
 | `ANTHROPIC_MODEL` | `claude-opus-4-8` | Model for resolution and repair |
 | `ANTHROPIC_JUDGE_MODEL` | `claude-haiku-4-5` | Cheap model for the verifier and judge |
 | `ANTHROPIC_EFFORT` | `medium` | Thinking effort for resolution (`low`, `medium`, `high`, `max`) |
+| `OPENAI_API_KEY` | required if provider=openai | OpenAI key |
+| `OPENAI_MODEL` | `gpt-4o` | Resolution model (any chat-completions model your key allows) |
+| `OPENAI_JUDGE_MODEL` | `gpt-4o-mini` | Cheap model for the verifier and judge |
+| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | Override for Azure OpenAI or OpenAI-compatible gateways |
 | `RESOLUTION_MODE` | `adaptive` | `adaptive` (verify, escalate on doubt) or `thorough` (always dual-strategy) |
 | `PORT` | `3000` | HTTP port |
 | `NODE_ENV` | `development` | `development` or `production` |
@@ -218,6 +224,24 @@ Set `DASHBOARD_TOKEN` in production; these endpoints then require `Authorization
 Per-repository overrides live in `.auto-merge.yml`; see [`.auto-merge.example.yml`](.auto-merge.example.yml). Supported keys: `enabled`, `autoApplyConfidenceThreshold`, `maxFilesToAutoResolve`, `excludePaths`, `dryRun`, `autoMergeOnCIPass`.
 
 ---
+
+## Model providers
+
+The resolver is provider-agnostic. Set `LLM_PROVIDER`:
+
+- **`anthropic`** (default, native): uses the Anthropic SDK with streaming, prompt caching, and adaptive thinking/effort — the most token-efficient path. Set `ANTHROPIC_API_KEY` and optionally `ANTHROPIC_MODEL`.
+- **`openai`**: uses the OpenAI chat-completions API in JSON mode (dependency-free, via `fetch`). Set `OPENAI_API_KEY` and optionally `OPENAI_MODEL`. Works with Azure OpenAI or any OpenAI-compatible gateway via `OPENAI_BASE_URL`. Prompt caching and thinking/effort are Anthropic-only and are simply skipped.
+
+Only the selected provider's key is required at boot. The full pipeline — adaptive verify/escalate, syntax gate, learning, cost accounting — runs identically on either; cost is estimated from the active model's published rates.
+
+There are runnable end-to-end harnesses (no GitHub App required):
+
+```bash
+npm run e2e:local        # real git plumbing + fast paths, no API key
+npm run e2e:integration  # full pipeline on real git, model stubbed
+npm run e2e:openai       # full pipeline on the OpenAI path, fetch stubbed
+npm run e2e:live         # LIVE: real API call using the key in .env (small spend)
+```
 
 ## How resolution works
 

@@ -144,7 +144,8 @@ export function createApp(): express.Application {
       env: config.server.nodeEnv,
       uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000),
       queue: isQueueEnabled() ? 'enabled' : 'disabled (in-process fallback)',
-      model: config.anthropic.model,
+      provider: config.llm.provider,
+      model: config.llm.provider === 'openai' ? config.openai.model : config.anthropic.model,
       learning: config.learning.enabled ? 'on' : 'off',
       notifications: notificationsConfigured() ? 'configured' : 'none',
     });

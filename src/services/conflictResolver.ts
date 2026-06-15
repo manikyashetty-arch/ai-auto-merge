@@ -1,9 +1,9 @@
-import Anthropic from '@anthropic-ai/sdk';
 import { config } from '../utils/config';
 import { logger } from '../utils/logger';
 import { metrics } from '../utils/metrics';
 import { mapLimit } from '../utils/async';
-import { recordUsage, ApiUsageLike } from '../utils/pricing';
+import { recordUsage } from '../utils/pricing';
+import { complete } from './llm';
 import { ConflictedFile, ResolvedFile, RunUsage } from '../types';
 import {
   classify,
@@ -29,26 +29,8 @@ import {
 
 export { ResolutionContext } from './prompts';
 
-const client = new Anthropic({ apiKey: config.anthropic.apiKey });
-
 /** How many files are resolved concurrently per PR (each file = 1-3 API calls). */
 const FILE_CONCURRENCY = 3;
-
-// Adaptive thinking is only valid on Opus 4.6+, Sonnet 4.6+ and Fable models —
-// sending it to older/smaller models returns a 400.
-function thinkingParam(model: string): Record<string, unknown> {
-  return /opus-4-[6-9]|sonnet-4-[6-9]|fable/.test(model)
-    ? { thinking: { type: 'adaptive' } as never }
-    : {};
-}
-
-// Effort tunes thinking-token spend; supported on Fable, Opus 4.5+, Sonnet 4.6
-// (not Haiku — sending it there 400s).
-function effortParam(model: string): Record<string, unknown> {
-  return /opus-4-[5-9]|sonnet-4-[6-9]|fable/.test(model)
-    ? { output_config: { effort: config.anthropic.effort } as never }
-    : {};
-}
 
 /**
  * Right-size the output ceiling to the file: a resolution is roughly the size
@@ -59,10 +41,6 @@ function effortParam(model: string): Record<string, unknown> {
 function maxTokensFor(content: string): number {
   const estimate = Math.ceil(content.length / 3) + 2_000;
   return Math.min(64_000, Math.max(4_096, estimate));
-}
-
-function usageOf(message: unknown): ApiUsageLike | undefined {
-  return (message as { usage?: ApiUsageLike }).usage;
 }
 
 // ─── Public entry point ────────────────────────────────────────────────────────
@@ -173,7 +151,7 @@ async function resolveWithAI(
 
   const proposalA = await runProposal(classified, prContext, STRATEGIES[0], usage);
 
-  if (config.anthropic.resolutionMode === 'adaptive' && !proposalA.needs_review) {
+  if (config.llm.resolutionMode === 'adaptive' && !proposalA.needs_review) {
     const verdict = await verifyProposal(file, proposalA.content, usage);
     if (verdict.ok && verdict.confidence !== 'low' && proposalA.confidence !== 'low') {
       logger.debug(`${file.path}: single proposal verified (${verdict.confidence}) — shipping`);
@@ -267,40 +245,26 @@ async function runProposal(
   usage?: RunUsage
 ): Promise<Proposal> {
   const { file } = classified;
-  const model = config.anthropic.model;
 
   try {
-    const stream = client.messages.stream({
-      model,
-      max_tokens: maxTokensFor(file.content),
-      ...thinkingParam(model),
-      ...effortParam(model),
+    const result = await complete({
       system: RESOLVER_SYSTEM,
-      messages: [
-        {
-          role: 'user',
-          content: [
-            // PR context is identical across all files → caches for the whole PR.
-            ...(prContext
-              ? [{ type: 'text' as const, text: prContext, cache_control: { type: 'ephemeral' as const } }]
-              : []),
-            // The file block is identical across both strategies → caches per file.
-            { type: 'text', text: buildFileBlock(file), cache_control: { type: 'ephemeral' } },
-            // Only the strategy instruction varies per call.
-            { type: 'text', text: `${strategy.instruction}\n\nReturn JSON only.` },
-          ],
-        },
+      maxTokens: maxTokensFor(file.content),
+      tier: 'resolve',
+      blocks: [
+        // PR context is identical across all files → caches for the whole PR.
+        ...(prContext ? [{ text: prContext, cacheable: true }] : []),
+        // The file block is identical across both strategies → caches per file.
+        { text: buildFileBlock(file), cacheable: true },
+        // Only the strategy instruction varies per call.
+        { text: `${strategy.instruction}\n\nReturn JSON only.` },
       ],
     });
 
-    const message = await stream.finalMessage();
-    recordUsage(usage, model, usageOf(message));
-    metrics.claudeCalls.inc({ model, outcome: 'ok' });
+    recordUsage(usage, result.model, result.usage);
+    metrics.claudeCalls.inc({ model: result.model, outcome: 'ok' });
 
-    const text = message.content.find((b) => b.type === 'text');
-    if (!text || text.type !== 'text') throw new Error('No text response');
-
-    const parsed = parseResolverResponse(text.text);
+    const parsed = parseResolverResponse(result.text);
     return {
       id: strategy.id,
       content: parsed.resolved_content,
@@ -310,7 +274,7 @@ async function runProposal(
       needs_review: parsed.needs_review,
     };
   } catch (err) {
-    metrics.claudeCalls.inc({ model, outcome: 'error' });
+    metrics.claudeCalls.inc({ model: config.llm.provider, outcome: 'error' });
     logger.warn(`${file.path}: ${strategy.label} proposal failed:`, err);
     return {
       id: strategy.id,
@@ -333,22 +297,18 @@ async function verifyProposal(
   proposedContent: string,
   usage?: RunUsage
 ): Promise<{ ok: boolean; confidence: 'high' | 'medium' | 'low'; reason: string }> {
-  const model = config.anthropic.judgeModel;
   try {
-    const response = await client.messages.create({
-      model,
-      max_tokens: 512,
+    const result = await complete({
       system: VERIFY_SYSTEM,
-      messages: [{ role: 'user', content: buildVerifyPrompt(file, proposedContent) }],
+      maxTokens: 512,
+      tier: 'judge',
+      blocks: [{ text: buildVerifyPrompt(file, proposedContent) }],
     });
-    recordUsage(usage, model, usageOf(response));
-    metrics.claudeCalls.inc({ model, outcome: 'ok' });
-
-    const text = response.content.find((b) => b.type === 'text');
-    if (!text || text.type !== 'text') throw new Error('No verify response');
-    return parseVerifyResponse(text.text);
+    recordUsage(usage, result.model, result.usage);
+    metrics.claudeCalls.inc({ model: result.model, outcome: 'ok' });
+    return parseVerifyResponse(result.text);
   } catch (err) {
-    metrics.claudeCalls.inc({ model, outcome: 'error' });
+    metrics.claudeCalls.inc({ model: config.llm.provider, outcome: 'error' });
     logger.warn(`${file.path}: verification failed, will escalate:`, err);
     return { ok: false, confidence: 'low', reason: 'verifier unavailable' };
   }
@@ -360,28 +320,21 @@ async function judgeProposals(
   proposalB: Proposal,
   usage?: RunUsage
 ): Promise<{ winner: 'A' | 'B' | 'neither'; reason: string; confidence: 'high' | 'medium' | 'low' }> {
-  const model = config.anthropic.judgeModel;
-
   try {
-    const response = await client.messages.create({
-      model,
-      max_tokens: 1024,
+    const result = await complete({
       system: JUDGE_SYSTEM,
-      messages: [
-        { role: 'user', content: buildJudgePrompt(file, proposalA.content, proposalB.content) },
-      ],
+      maxTokens: 1024,
+      tier: 'judge',
+      blocks: [{ text: buildJudgePrompt(file, proposalA.content, proposalB.content) }],
     });
-    recordUsage(usage, model, usageOf(response));
-    metrics.claudeCalls.inc({ model, outcome: 'ok' });
+    recordUsage(usage, result.model, result.usage);
+    metrics.claudeCalls.inc({ model: result.model, outcome: 'ok' });
 
-    const text = response.content.find((b) => b.type === 'text');
-    if (!text || text.type !== 'text') throw new Error('No judge response');
-
-    const parsed = parseJudgeResponse(text.text);
+    const parsed = parseJudgeResponse(result.text);
     logger.debug(`${file.path}: judge picked ${parsed.winner} (${parsed.confidence}) — ${parsed.reason}`);
     return parsed;
   } catch (err) {
-    metrics.claudeCalls.inc({ model, outcome: 'error' });
+    metrics.claudeCalls.inc({ model: config.llm.provider, outcome: 'error' });
     logger.warn(`${file.path}: judge failed, defaulting to conservative:`, err);
     return { winner: 'A', reason: 'Judge unavailable, defaulting to conservative', confidence: 'medium' };
   }
@@ -391,7 +344,7 @@ async function judgeProposals(
 
 /**
  * One-shot repair when a resolved file fails the syntax check: feed the error
- * back to Claude and ask for a minimal fix. Returns ok=false if the repair
+ * back to the model and ask for a minimal fix. Returns ok=false if the repair
  * call itself fails — the caller decides whether to downgrade the file.
  */
 export async function repairResolution(
@@ -400,31 +353,23 @@ export async function repairResolution(
   syntaxError: string,
   usage?: RunUsage
 ): Promise<{ ok: boolean; content: string }> {
-  const model = config.anthropic.model;
   try {
-    const stream = client.messages.stream({
-      model,
-      max_tokens: maxTokensFor(brokenContent),
-      ...thinkingParam(model),
-      ...effortParam(model),
+    const result = await complete({
       system: REPAIR_SYSTEM,
-      messages: [{ role: 'user', content: buildRepairPrompt(filePath, brokenContent, syntaxError) }],
+      maxTokens: maxTokensFor(brokenContent),
+      tier: 'resolve',
+      blocks: [{ text: buildRepairPrompt(filePath, brokenContent, syntaxError) }],
     });
+    recordUsage(usage, result.model, result.usage);
+    metrics.claudeCalls.inc({ model: result.model, outcome: 'ok' });
 
-    const message = await stream.finalMessage();
-    recordUsage(usage, model, usageOf(message));
-    metrics.claudeCalls.inc({ model, outcome: 'ok' });
-
-    const text = message.content.find((b) => b.type === 'text');
-    if (!text || text.type !== 'text') throw new Error('No text response');
-
-    const json = extractJson(text.text) as { resolved_content?: unknown };
+    const json = extractJson(result.text) as { resolved_content?: unknown };
     if (typeof json?.resolved_content !== 'string' || json.resolved_content.length === 0) {
       throw new Error('Repair response missing resolved_content');
     }
     return { ok: true, content: json.resolved_content };
   } catch (err) {
-    metrics.claudeCalls.inc({ model, outcome: 'error' });
+    metrics.claudeCalls.inc({ model: config.llm.provider, outcome: 'error' });
     logger.warn(`${filePath}: syntax repair failed:`, err);
     return { ok: false, content: brokenContent };
   }

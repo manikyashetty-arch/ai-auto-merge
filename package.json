@@ -33,7 +33,10 @@
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
     "lint": "eslint src tests",
     "test": "jest --forceExit",
-    "e2e:local": "npm run build && node scripts/e2e-local.mjs"
+    "e2e:local": "npm run build && node scripts/e2e-local.mjs",
+    "e2e:integration": "npm run build && node scripts/e2e-integration.cjs",
+    "e2e:openai": "npm run build && node scripts/e2e-openai.cjs",
+    "e2e:live": "npm run build && node scripts/e2e-live.cjs"
   },
   "jest": {
     "preset": "ts-jest",
