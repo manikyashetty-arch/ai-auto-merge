@@ -3,7 +3,7 @@ import { logger } from '../utils/logger';
 import { metrics } from '../utils/metrics';
 import { mapLimit } from '../utils/async';
 import { recordUsage } from '../utils/pricing';
-import { complete } from './llm';
+import { complete, maxOutputTokens } from './llm';
 import { ConflictedFile, ResolvedFile, RunUsage } from '../types';
 import {
   classify,
@@ -121,17 +121,19 @@ async function resolveFile(
         };
       }
       const bytes = Buffer.byteLength(file.content, 'utf-8');
-      if (bytes > config.settings.maxFileBytes) {
+      // Two oversize gates: the byte cap, and the model's output ceiling. A
+      // whole-file resolution must fit in the model's completion limit (gpt-4o:
+      // 16384) — if it can't, sending the request just earns a 400, so flag it
+      // up front with an actionable message.
+      const needed = maxTokensFor(file.content);
+      const outCap = maxOutputTokens();
+      if (bytes > config.settings.maxFileBytes || needed > outCap) {
         const kb = Math.round(bytes / 1024);
-        const capKb = Math.round(config.settings.maxFileBytes / 1024);
-        return {
-          path: file.path,
-          content: file.content,
-          confidence: 'low',
-          explanation: `File too large for AI resolution (${kb} KB > ${capKb} KB cap, MAX_FILE_BYTES). Resolve manually.`,
-          needsReview: true,
-          method: 'oversize',
-        };
+        const explanation =
+          needed > outCap
+            ? `File is too large for the current model to regenerate in one pass (~${needed} output tokens needed, model allows ${outCap}). Resolve manually, or switch to a model/provider with a higher output limit (e.g. Claude Opus allows 64k).`
+            : `File too large for AI resolution (${kb} KB > ${Math.round(config.settings.maxFileBytes / 1024)} KB cap, MAX_FILE_BYTES). Resolve manually.`;
+        return { path: file.path, content: file.content, confidence: 'low', explanation, needsReview: true, method: 'oversize' };
       }
       return preservationGuard(classified, await resolveWithAI(classified, prContext, usage));
     }

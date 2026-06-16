@@ -19,6 +19,7 @@ export const config = {
     model: 'gpt-4o',
     judgeModel: 'gpt-4o-mini',
     baseUrl: 'https://api.openai.com/v1',
+    maxOutputTokens: 16_384,
   },
   server: {
     port: 3000,

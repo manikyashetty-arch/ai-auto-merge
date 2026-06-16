@@ -205,6 +205,7 @@ Set `DASHBOARD_TOKEN` in production; these endpoints then require `Authorization
 | `OPENAI_MODEL` | `gpt-4o` | Resolution model (any chat-completions model your key allows) |
 | `OPENAI_JUDGE_MODEL` | `gpt-4o-mini` | Cheap model for the verifier and judge |
 | `OPENAI_BASE_URL` | `https://api.openai.com/v1` | Override for Azure OpenAI or OpenAI-compatible gateways |
+| `OPENAI_MAX_OUTPUT_TOKENS` | `16384` | Your OpenAI model's completion limit. Requests are clamped to it; files needing more output are flagged. Raise for models that allow more |
 | `RESOLUTION_MODE` | `adaptive` | `adaptive` (verify, escalate on doubt) or `thorough` (always dual-strategy) |
 | `PORT` | `3000` | HTTP port |
 | `NODE_ENV` | `development` | `development` or `production` |

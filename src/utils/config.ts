@@ -95,6 +95,13 @@ export const config = {
     judgeModel: process.env.OPENAI_JUDGE_MODEL || 'gpt-4o-mini',
     /** Override for Azure OpenAI or OpenAI-compatible gateways. */
     baseUrl: process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1',
+    /**
+     * Max completion tokens the chosen OpenAI model accepts. gpt-4o / gpt-4o-mini
+     * cap at 16384; gpt-4.1 ~32768; o-series higher. Requests are clamped to this
+     * and files needing more output are flagged (a whole-file resolution can't
+     * fit). Raise it if your model supports more.
+     */
+    maxOutputTokens: intEnv('OPENAI_MAX_OUTPUT_TOKENS', 16_384),
   },
   server: {
     port: intEnv('PORT', 3000),

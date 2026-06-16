@@ -5,7 +5,7 @@
 jest.mock('../src/utils/config', () => ({
   config: {
     llm: { provider: 'openai', resolutionMode: 'adaptive' },
-    openai: { apiKey: 'sk-openai-test', model: 'gpt-4o', judgeModel: 'gpt-4o-mini', baseUrl: 'https://api.openai.com/v1' },
+    openai: { apiKey: 'sk-openai-test', model: 'gpt-4o', judgeModel: 'gpt-4o-mini', baseUrl: 'https://api.openai.com/v1', maxOutputTokens: 16_384 },
     anthropic: { apiKey: '', model: 'claude-opus-4-8', judgeModel: 'claude-haiku-4-5', effort: 'medium' },
   },
 }));
@@ -59,6 +59,12 @@ describe('OpenAI provider', () => {
     expect(res.usage).toEqual({
       input_tokens: 1200, output_tokens: 300, cache_read_input_tokens: 400, cache_creation_input_tokens: 0,
     });
+  });
+
+  it('clamps max_tokens to the model output limit (prevents the gpt-4o 400)', async () => {
+    mockFetchOnce({ choices: [{ message: { content: '{"resolved_content":"x","confidence":"high","explanation":"ok","needs_review":false}' } }], usage: {} });
+    await complete({ system: 'S', tier: 'resolve', maxTokens: 45638, blocks: [{ text: 'x' }] });
+    expect(lastRequest.body.max_tokens).toBe(16_384); // not the requested 45638
   });
 
   it('uses the cheaper judge model for the judge tier', async () => {

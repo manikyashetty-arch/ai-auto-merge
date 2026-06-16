@@ -43,6 +43,16 @@ export function activeModels(): { resolve: string; judge: string; provider: stri
     : { resolve: config.anthropic.model, judge: config.anthropic.judgeModel, provider: 'anthropic' };
 }
 
+/**
+ * The active model's max completion-token ceiling. Requests are clamped to it,
+ * and the resolver uses it to flag files too large to regenerate whole (rather
+ * than sending a request the API will reject with a 400). Claude Opus allows up
+ * to 64k; OpenAI models are much lower (gpt-4o: 16384).
+ */
+export function maxOutputTokens(): number {
+  return config.llm.provider === 'openai' ? config.openai.maxOutputTokens : 64_000;
+}
+
 export async function complete(opts: CompleteOpts): Promise<LlmResult> {
   return config.llm.provider === 'openai' ? openaiComplete(opts) : anthropicComplete(opts);
 }
@@ -126,7 +136,9 @@ async function openaiComplete(opts: CompleteOpts): Promise<LlmResult> {
   const userContent = opts.blocks.map((b) => b.text).join('\n\n');
   const body = JSON.stringify({
     model,
-    max_tokens: opts.maxTokens,
+    // Never exceed the model's completion limit — gpt-4o rejects anything above
+    // 16384 with a 400. (The resolver already flags files that need more.)
+    max_tokens: Math.min(opts.maxTokens, config.openai.maxOutputTokens),
     // JSON mode — our system prompts already instruct "Return JSON only",
     // which the API requires when this is set.
     response_format: { type: 'json_object' },
