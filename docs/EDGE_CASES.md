@@ -52,6 +52,15 @@ never "quietly wrong." The defenses, in order:
    and flagged for manual review with a clear reason. Set
    `ALLOW_WORKFLOW_FILES=true` only if you granted the App that permission.
 7. **Syntax gate + one AI repair** before commit; failures downgrade to review.
+7a. **Post-resolution steps can't corrupt a resolution.** Auto-formatting (Option 1)
+   runs the repo's Prettier only on files the bot resolved, then re-validates the
+   formatted output through the same syntax gate and **keeps the original on any
+   problem** — Prettier output is committed only if it still parses. The optional
+   `postResolve` command (Option 2) is off by default, read only from the base
+   branch (a PR can't inject it), run with secrets scrubbed from its environment
+   and under a timeout; if it exits non-zero or times out, **nothing is committed**
+   and the PR is flagged for manual review — a broken command can never push
+   half-generated output. (`postProcess.ts`)
 8. **`--force-with-lease`**: if the author pushed during resolution, git refuses
    the push and the run is recorded as a clean *skip*, not an error — their work
    is never overwritten.

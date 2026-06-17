@@ -278,12 +278,53 @@ async function testHunkSpliceRealGit() {
     finalContent.includes('from-pr+from-main') && !/<<<<<<<|>>>>>>>/.test(finalContent));
 }
 
+// ─── Scenario E: post-resolution formatting + hook (real prettier, real shell) ──
+// Proves Option 1 (auto-format) and Option 2 (postResolve hook) with no mocks:
+// the bundled Prettier really reformats a resolved file (and the result stays
+// valid), and the hook really runs in the workspace and fails safe.
+async function testPostProcessing() {
+  section('E. Post-resolution formatting + hook (real prettier, real subprocess)');
+  const { formatResolutions, runPostResolveHook } = await import('../dist/services/postProcess.js');
+
+  const dir = fs.mkdtempSync(path.join(tmpRoot, 'pp-'));
+  const cfg = {
+    enabled: true, autoApplyConfidenceThreshold: 'high', maxFilesToAutoResolve: 20,
+    excludePaths: [], dryRun: false, autoMergeOnCIPass: false,
+    format: true, postResolve: null, postResolveTimeoutSec: 30,
+  };
+
+  // Option 1: real Prettier reformats a badly-formatted resolved file.
+  const f = { path: 'x.ts', content: 'const    x=1\nfunction f( ){return x}\n', confidence: 'high', explanation: '', needsReview: false, method: 'ai_hunk' };
+  await formatResolutions(dir, [f], cfg);
+  check('prettier reformatted the resolved file', f.content.includes('const x = 1;'), `(got: ${JSON.stringify(f.content)})`);
+  check('formatted output stays valid (no markers)', !/<<<<<<<|>>>>>>>/.test(f.content));
+
+  // format:false leaves the file exactly as resolved.
+  const g = { path: 'y.ts', content: 'const    y=2\n', confidence: 'high', explanation: '', needsReview: false, method: 'ai_hunk' };
+  await formatResolutions(dir, [g], { ...cfg, format: false });
+  check('format:false leaves content untouched', g.content === 'const    y=2\n');
+
+  // A file flagged for review is never reformatted.
+  const r = { path: 'z.ts', content: 'const    z=3\n', confidence: 'low', explanation: '', needsReview: true, method: 'ai_hunk_review' };
+  await formatResolutions(dir, [r], cfg);
+  check('needs-review file is not formatted', r.content === 'const    z=3\n');
+
+  // Option 2: the hook runs in the workspace and a generated file appears.
+  const ok = await runPostResolveHook(dir, { ...cfg, postResolve: 'echo generated > gen.txt' });
+  check('postResolve hook ran in the workspace and succeeded', ok.ok === true && fs.existsSync(path.join(dir, 'gen.txt')));
+
+  // A failing hook reports not-ok (the pipeline would commit nothing).
+  const fail = await runPostResolveHook(dir, { ...cfg, postResolve: 'exit 7' });
+  check('failing hook reports not-ok (commit would be skipped)', fail.ok === false && /exited 7/.test(fail.error || ''));
+}
+
 try {
   console.log('ai-auto-merge — local end-to-end harness (real git, no GitHub App, no API key)');
   await testGitOpsPlumbing();
   await testFastPaths();
   testClassifierRouting();
   await testHunkSpliceRealGit();
+  await testPostProcessing();
   section('Result');
   console.log(`  ${pass} passed, ${fail} failed`);
 } finally {

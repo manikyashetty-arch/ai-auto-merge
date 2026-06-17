@@ -91,6 +91,24 @@ export interface RepoConfig {
   excludePaths: string[];
   dryRun: boolean;
   autoMergeOnCIPass: boolean;
+  /**
+   * Option 1 — run the bundled Prettier (using the repo's own config) on the
+   * files the bot resolved, before committing, so they match the repo's style.
+   * Only touches resolved files; the result is re-validated and discarded on any
+   * problem. Default on.
+   */
+  format: boolean;
+  /**
+   * Option 2 — a shell command run in the isolated workspace AFTER resolutions
+   * are applied and BEFORE the commit (e.g. "cd app && npm ci && npm run gen:api").
+   * Lets a repo regenerate artifacts / format with its own toolchain so the
+   * pushed branch is green. Off by default; read only from the base branch.
+   * Runs with secrets scrubbed from its environment and a timeout; if it fails,
+   * nothing is committed and the PR is flagged for manual review.
+   */
+  postResolve: string | null;
+  /** Max seconds the postResolve command may run before it is killed (failure). */
+  postResolveTimeoutSec: number;
 }
 
 // ─── Usage / cost accounting ───────────────────────────────────────────────────

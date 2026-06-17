@@ -37,6 +37,8 @@ export const config = {
     maxFilesToAutoResolve: 20,
     maxFileBytes: 262_144,
     allowWorkflowFiles: false,
+    formatResolved: true,
+    postResolveTimeoutSec: 180,
     queueConcurrency: 3,
     inProcessConcurrency: 2,
     prConcurrency: 3,

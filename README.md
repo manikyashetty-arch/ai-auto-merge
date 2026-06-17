@@ -53,6 +53,7 @@ ai-auto-merge is complementary to a merge queue, not a replacement for one: poin
 - Adaptive, token-efficient pipeline: one resolution pass plus a cheap independent verifier on the common case; it escalates to a second full strategy and a judge model only when the verifier has doubts. Quality is preserved by always cross-checking; cost is roughly halved versus generating two full resolutions every time. A `thorough` mode is available when you want both strategies on every conflict.
 - Cost controls throughout: prompt caching shares the PR context across every file (the diff is sent once and read at roughly a tenth of the price thereafter), output ceilings are sized to each unit (hunk or file) instead of a fixed maximum, and effort is tunable.
 - Self-healing syntax gate: every resolved TypeScript, JavaScript, Python, and Go file is parsed before commit. A failure triggers one AI repair attempt with the exact error before the file is flagged for review.
+- Post-resolution polish so the pushed branch is cleaner: resolved files are auto-formatted with the repo's own Prettier config before commit (only files the bot touched, re-validated and reverted on any problem — never makes a resolution worse). An optional, opt-in `postResolve` command (e.g. `cd app && npm run gen:api`) can regenerate code/types in the isolated workspace before pushing; it runs with secrets scrubbed and under a timeout, and if it fails nothing is committed — the PR is flagged for review instead.
 - Deterministic fast paths: additive conflicts and import-only conflicts are merged by rule, with zero AI calls. Lockfiles (`package-lock.json`, `go.sum`, `Cargo.lock`, and a dozen more) are never AI-merged; you get the exact regenerate command instead. GitHub Actions workflow files (`.github/workflows/*`) are also flagged for manual review by default, since a GitHub App can't push to them without the `workflows` permission.
 - Confidence-gated auto-apply with a per-repo threshold; oversized files and high-fanout PRs are bounded to cap cost.
 
@@ -209,6 +210,8 @@ Set `DASHBOARD_TOKEN` in production; these endpoints then require `Authorization
 | `OPENAI_MAX_OUTPUT_TOKENS` | `16384` | Your OpenAI model's completion limit. Requests are clamped to it. With hunk-level resolution (the default) only small conflict regions are generated, so large files are unaffected; in `file` mode, files needing more output are flagged. Raise for models that allow more |
 | `RESOLUTION_MODE` | `adaptive` | `adaptive` (verify, escalate on doubt) or `thorough` (always dual-strategy) |
 | `RESOLUTION_GRANULARITY` | `auto` | `auto`/`hunk` resolve only conflict regions and splice them into the verbatim file (no whole-file size ceiling, far fewer tokens); `file` regenerates the whole file. All fall back to whole-file when markers can't be cleanly parsed |
+| `FORMAT_RESOLVED` | `true` | Auto-format resolved files with the repo's Prettier before commit. `false` disables it globally (per-repo `format:` in `.auto-merge.yml` overrides) |
+| `POST_RESOLVE_TIMEOUT_SEC` | `180` | Default ceiling for a repo's `postResolve` command (per-repo config can override within 10–1800) |
 | `HUNK_CONTEXT_LINES` | `12` | Lines of surrounding context sent with each conflict hunk (each side) |
 | `PORT` | `3000` | HTTP port |
 | `NODE_ENV` | `development` | `development` or `production` |
@@ -232,7 +235,7 @@ Set `DASHBOARD_TOKEN` in production; these endpoints then require `Authorization
 | `INPROCESS_CONCURRENCY` | `2` | Concurrent merge events without Redis |
 | `PR_CONCURRENCY` | `1` | Conflicted PRs resolved at once per merge (`1` = sequential, one by one) |
 
-Per-repository overrides live in `.auto-merge.yml`; see [`.auto-merge.example.yml`](.auto-merge.example.yml). Supported keys: `enabled`, `autoApplyConfidenceThreshold`, `maxFilesToAutoResolve`, `excludePaths`, `dryRun`, `autoMergeOnCIPass`.
+Per-repository overrides live in `.auto-merge.yml`; see [`.auto-merge.example.yml`](.auto-merge.example.yml). Supported keys: `enabled`, `autoApplyConfidenceThreshold`, `maxFilesToAutoResolve`, `excludePaths`, `dryRun`, `autoMergeOnCIPass`, `format`, `postResolve`, `postResolveTimeoutSec`.
 
 ---
 

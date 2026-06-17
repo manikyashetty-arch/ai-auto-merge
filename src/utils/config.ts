@@ -145,6 +145,15 @@ export const config = {
      * you granted the App that permission (and accept a bot editing CI).
      */
     allowWorkflowFiles: process.env.ALLOW_WORKFLOW_FILES === 'true',
+    /**
+     * Auto-format resolved files with the bundled Prettier (Option 1) before
+     * committing. Safe: only reformats files the bot resolved, re-validates the
+     * result, and keeps the original on any error. Default on; per-repo
+     * `.auto-merge.yml` `format:` overrides. Set FORMAT_RESOLVED=false to disable.
+     */
+    formatResolved: process.env.FORMAT_RESOLVED !== 'false',
+    /** Default ceiling (seconds) for a repo's postResolve command; per-repo config can lower/raise within bounds. */
+    postResolveTimeoutSec: intEnv('POST_RESOLVE_TIMEOUT_SEC', 180),
     /** BullMQ worker concurrency when REDIS_URL is set. */
     queueConcurrency: intEnv('QUEUE_CONCURRENCY', 3),
     /** Concurrent PR-merge events processed in-process when Redis is absent. */

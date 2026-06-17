@@ -13,7 +13,24 @@ const DEFAULT_CONFIG: RepoConfig = {
   excludePaths: [],
   dryRun: false,
   autoMergeOnCIPass: config.settings.autoMergeOnCIPass,
+  format: config.settings.formatResolved,
+  postResolve: null,
+  postResolveTimeoutSec: config.settings.postResolveTimeoutSec,
 };
+
+const POST_RESOLVE_TIMEOUT_MIN = 10;
+const POST_RESOLVE_TIMEOUT_MAX = 1800;
+
+/** A postResolve command must be a non-empty string; anything else disables it. */
+function parsePostResolve(value: unknown): string | null {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function parseTimeout(value: unknown): number {
+  const n = typeof value === 'number' ? value : NaN;
+  if (!Number.isFinite(n)) return DEFAULT_CONFIG.postResolveTimeoutSec;
+  return Math.max(POST_RESOLVE_TIMEOUT_MIN, Math.min(POST_RESOLVE_TIMEOUT_MAX, Math.floor(n)));
+}
 
 export async function getRepoConfig(
   octokit: Octokit,
@@ -55,5 +72,8 @@ function mergeWithDefaults(parsed: Partial<RepoConfig>): RepoConfig {
     excludePaths: Array.isArray(parsed.excludePaths) ? parsed.excludePaths : [],
     dryRun: parsed.dryRun ?? DEFAULT_CONFIG.dryRun,
     autoMergeOnCIPass: parsed.autoMergeOnCIPass ?? DEFAULT_CONFIG.autoMergeOnCIPass,
+    format: typeof parsed.format === 'boolean' ? parsed.format : DEFAULT_CONFIG.format,
+    postResolve: parsePostResolve(parsed.postResolve),
+    postResolveTimeoutSec: parseTimeout(parsed.postResolveTimeoutSec),
   };
 }

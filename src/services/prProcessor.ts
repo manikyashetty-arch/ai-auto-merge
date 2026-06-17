@@ -9,6 +9,7 @@ import {
   getPRDiff,
 } from './github';
 import { prepareConflictWorkspace, applyResolutions, commitAndPush, abortMerge, ConcurrentPushError } from './gitOps';
+import { formatResolutions, runPostResolveHook } from './postProcess';
 import { resolveConflicts, repairResolution } from './conflictResolver';
 import { getRepoConfig } from './repoConfig';
 import { checkSyntax } from './syntaxCheck';
@@ -266,6 +267,11 @@ async function resolveWithRun(
     // Pre-push syntax gate with one AI repair attempt per failing file
     await syntaxGate(resolvedFiles, ctx.dir, run);
 
+    // Option 1: auto-format the files the bot resolved so they match the repo's
+    // style (and stop failing format:check). Only touches resolved files,
+    // re-validates the result, and keeps the original on any problem.
+    await formatResolutions(ctx.dir, resolvedFiles, repoConfig);
+
     // Adaptive learning gate: route conflict categories this team has
     // historically overridden back to manual review.
     applyLearningGates(`${pr.repoOwner}/${pr.repoName}`, resolvedFiles);
@@ -299,6 +305,25 @@ async function resolveWithRun(
       ctx,
       autoApply.map((f) => ({ path: f.path, content: f.content, isDelete: f.isDelete }))
     );
+
+    // Option 2 (opt-in): run the repo's postResolve command (e.g. regenerate API
+    // types) in the isolated workspace before committing. Fail-safe — if it
+    // errors or times out, commit NOTHING and flag the PR for manual review, so
+    // a broken hook can never push half-generated output.
+    if (repoConfig.postResolve) {
+      const hook = await runPostResolveHook(ctx.dir, repoConfig);
+      if (!hook.ok) {
+        const msg = `Conflicts were resolved, but the postResolve command failed (${hook.error}). Nothing was committed — resolve manually, or fix the command in .auto-merge.yml.`;
+        logger.warn(`PR #${pr.number}: postResolve hook failed — ${hook.error}`);
+        await abortMerge(ctx);
+        await createCommitStatus(octokit, pr.repoOwner, pr.repoName, pr.headSha, 'failure', 'postResolve hook failed');
+        await postComment(octokit, pr.repoOwner, pr.repoName, pr.number, buildSkippedComment(msg, trigger));
+        finishRun(run, 'review_required', msg);
+        return;
+      }
+      // Stage anything the hook generated or changed (respects .gitignore).
+      await ctx.git.raw(['add', '-A']);
+    }
 
     const commitMessage = buildCommitMessage(pr, trigger, autoApply);
     const commitSha = await commitAndPush(ctx, commitMessage, pr.headRef, remoteUrl, token);

@@ -31,3 +31,24 @@ dryRun: false
 # automatically once CI passes and required reviews are in.
 # Requires "Allow auto-merge" in the repository settings.
 autoMergeOnCIPass: false
+
+# Auto-format the files the bot resolved (using THIS repo's Prettier config)
+# before committing, so they don't fail `prettier --check`. Only ever touches
+# files the bot resolved, and the result is re-validated and discarded if it
+# would no longer parse — it can never make a resolution worse. Default: true.
+format: true
+
+# OPTIONAL post-resolution command. After conflicts are resolved and applied
+# (but BEFORE the commit), run this shell command in the merged workspace — e.g.
+# to regenerate code/types or run a repo formatter so the pushed branch is green:
+#
+#   postResolve: "cd app && npm ci && npm run gen:api && npm run format"
+#
+# Safety: it runs ONLY if you set it here (off by default), only from this file
+# on the BASE branch (a PR can't inject it), with secrets scrubbed from its
+# environment, and under a timeout. If the command fails or times out, NOTHING
+# is committed and the PR is flagged for manual review — a broken command can
+# never push half-generated output. The command runs your repo's own scripts,
+# so treat enabling it as a trust decision.
+# postResolve: ""
+# postResolveTimeoutSec: 180   # 10–1800; how long the command may run
