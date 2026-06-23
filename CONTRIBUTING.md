@@ -5,7 +5,7 @@ Thanks for your interest. This guide covers the dev loop, conventions, and PR pr
 ## Dev setup
 
 ```bash
-git clone https://github.com/manikyashetty-arch/ai-auto-merge.git
+git clone https://github.com/ArsenalAI-Official/ai-auto-merge.git
 cd ai-auto-merge
 npm install
 cp .env.example .env   # fill in real values

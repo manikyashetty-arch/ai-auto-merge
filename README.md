@@ -2,12 +2,12 @@
 
 Automatically resolve merge conflicts in open pull requests using Claude, the moment another PR lands on the base branch — then optionally merge them when CI passes. Self-hosted, model-agnostic, and the only resolver that learns from your team's corrections.
 
-[![CI](https://github.com/manikyashetty-arch/ai-auto-merge/actions/workflows/ci.yml/badge.svg)](https://github.com/manikyashetty-arch/ai-auto-merge/actions/workflows/ci.yml)
-[![CodeQL](https://github.com/manikyashetty-arch/ai-auto-merge/actions/workflows/codeql.yml/badge.svg)](https://github.com/manikyashetty-arch/ai-auto-merge/actions/workflows/codeql.yml)
+[![CI](https://github.com/ArsenalAI-Official/ai-auto-merge/actions/workflows/ci.yml/badge.svg)](https://github.com/ArsenalAI-Official/ai-auto-merge/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/ArsenalAI-Official/ai-auto-merge/actions/workflows/codeql.yml/badge.svg)](https://github.com/ArsenalAI-Official/ai-auto-merge/actions/workflows/codeql.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](https://nodejs.org)
 [![TypeScript](https://img.shields.io/badge/typescript-5.x-blue)](https://www.typescriptlang.org)
-[![Use this template](https://img.shields.io/badge/use%20this-template-2ea44f?logo=github)](https://github.com/manikyashetty-arch/ai-auto-merge/generate)
+[![Use this template](https://img.shields.io/badge/use%20this-template-2ea44f?logo=github)](https://github.com/ArsenalAI-Official/ai-auto-merge/generate)
 
 ---
 
@@ -88,7 +88,7 @@ Point your GitHub App webhook at `POST /webhook` and open `http://localhost:3000
 
 Prefer containers: `docker compose up --build` brings up the app and a Redis instance.
 
-If you fork or template this repository, do a single search-and-replace of `manikyashetty-arch` to your own org in the badges, links, `package.json`, `.github/`, and the bot comment footer in `src/services/comments.ts`.
+If you fork or template this repository, do a single search-and-replace of `ArsenalAI-Official` to your own org in the badges, links, `package.json`, `.github/`, and the bot comment footer in `src/services/comments.ts`.
 
 ---
 

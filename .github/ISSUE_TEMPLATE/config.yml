@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: Questions and discussion
-    url: https://github.com/manikyashetty-arch/ai-auto-merge/discussions
+    url: https://github.com/ArsenalAI-Official/ai-auto-merge/discussions
     about: Ask questions or share ideas in Discussions instead of opening an issue.
   - name: Security vulnerability
-    url: https://github.com/manikyashetty-arch/ai-auto-merge/security/advisories/new
+    url: https://github.com/ArsenalAI-Official/ai-auto-merge/security/advisories/new
     about: Report security issues privately. Please do not file public issues.

@@ -8,7 +8,7 @@ import { formatTokens, formatUsd, totalTokens } from '../utils/pricing';
 
 // This link appears in every comment the bot posts — point it at your fork
 // if you run your own copy.
-const PROJECT_URL = 'https://github.com/manikyashetty-arch/ai-auto-merge';
+const PROJECT_URL = 'https://github.com/ArsenalAI-Official/ai-auto-merge';
 
 const FOOTER_LINK = `*Powered by [ai-auto-merge](${PROJECT_URL}) — comment \`/ai-merge help\` for commands*`;
 

@@ -7,12 +7,12 @@
   "main": "dist/index.js",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/manikyashetty-arch/ai-auto-merge.git"
+    "url": "git+https://github.com/ArsenalAI-Official/ai-auto-merge.git"
   },
   "bugs": {
-    "url": "https://github.com/manikyashetty-arch/ai-auto-merge/issues"
+    "url": "https://github.com/ArsenalAI-Official/ai-auto-merge/issues"
   },
-  "homepage": "https://github.com/manikyashetty-arch/ai-auto-merge#readme",
+  "homepage": "https://github.com/ArsenalAI-Official/ai-auto-merge#readme",
   "keywords": [
     "github-app",
     "merge-conflicts",

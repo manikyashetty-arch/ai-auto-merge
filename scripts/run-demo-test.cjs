@@ -13,7 +13,7 @@ process.env.NODE_ENV ||= 'production';
 const mode = process.argv[2] || 'check';
 const prNum = parseInt(process.argv[3] || '0', 10);
 
-const OWNER = process.env.DEMO_OWNER || 'manikyashetty-arch';
+const OWNER = process.env.DEMO_OWNER || 'ArsenalAI-Official';
 const REPO = process.env.DEMO_REPO || 'ai-auto-merge-demo';
 
 (async () => {
