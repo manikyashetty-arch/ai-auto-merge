@@ -4,6 +4,7 @@
   "description": "AI-powered GitHub App that auto-resolves merge conflicts in open PRs using Claude — with slash commands, a live dashboard, and Prometheus metrics",
   "private": true,
   "license": "MIT",
+  "author": "Manikya Rathna",
   "main": "dist/index.js",
   "repository": {
     "type": "git",
