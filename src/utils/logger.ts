@@ -15,12 +15,17 @@ const SECRET_PATTERNS: Array<[RegExp, string]> = [
   [/ghs_[A-Za-z0-9]{20,}/g, '[REDACTED_GH_TOKEN]'],
 ];
 
-function scrubString(s: string): string {
+/**
+ * Redact secrets from a string. Exported so anything that surfaces error text
+ * to an untrusted destination (e.g. a PR comment) can scrub it first — a git
+ * error can carry the auth header, and we must never echo that into a comment.
+ */
+export function scrubSecrets(s: string): string {
   return SECRET_PATTERNS.reduce((acc, [re, repl]) => acc.replace(re, repl), s);
 }
 
 function scrubDeep(value: unknown, seen = new WeakSet<object>()): unknown {
-  if (typeof value === 'string') return scrubString(value);
+  if (typeof value === 'string') return scrubSecrets(value);
   if (value === null || typeof value !== 'object') return value;
   if (seen.has(value as object)) return value;
   seen.add(value as object);
