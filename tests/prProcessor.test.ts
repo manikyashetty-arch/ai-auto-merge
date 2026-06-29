@@ -17,8 +17,8 @@ jest.mock('../src/services/syntaxCheck', () => ({
   checkSyntax: jest.fn(),
 }));
 
-import { ResolvedFile, ManualResolveEvent } from '../src/types';
-import { processManualResolve } from '../src/services/prProcessor';
+import { ResolvedFile, ManualResolveEvent, MergedPREvent } from '../src/types';
+import { processManualResolve, processMergedPR } from '../src/services/prProcessor';
 import * as github from '../src/services/github';
 import * as gitOps from '../src/services/gitOps';
 import * as conflictResolver from '../src/services/conflictResolver';
@@ -188,5 +188,44 @@ describe('all-or-nothing merge policy', () => {
     expect(gitOps.applyResolutions).toHaveBeenCalled();
     expect(gitOps.commitAndPush).toHaveBeenCalled();
     expect(gitOps.abortMerge).not.toHaveBeenCalled();
+  });
+});
+
+// ─── Error feedback on the PR ────────────────────────────────────────────────────
+// A merge-triggered run that errors previously posted NO comment (only a terse
+// commit status), so the PR never said why it failed. It must now post an error
+// comment — with the reason, scrubbed of secrets.
+describe('error feedback', () => {
+  const mock = (fn: unknown) => fn as jest.Mock;
+
+  it('posts an explanatory comment (with scrubbed reason) when a merge-triggered run errors', async () => {
+    jest.clearAllMocks();
+    const pr = {
+      number: 64, title: 'PR', body: '', headRef: 'feature', baseRef: 'main',
+      headSha: 'sha', url: 'http://x', repoOwner: 'o', repoName: 'r', installationId: 1,
+    };
+    mock(github.getInstallationOctokit).mockResolvedValue({});
+    mock(github.getOpenPRsWithConflicts).mockResolvedValue([pr]);
+    mock(github.getInstallationToken).mockResolvedValue('tok');
+    mock(github.getPRDiff).mockResolvedValue('');
+    mock(github.createCommitStatus).mockResolvedValue(undefined);
+    mock(github.postComment).mockResolvedValue(undefined);
+    // Make the workspace prep blow up with a secret-bearing git error.
+    mock(gitOps.prepareConflictWorkspace).mockRejectedValue(
+      new Error('fatal: unable to access — ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ012345')
+    );
+
+    const event: MergedPREvent = {
+      prNumber: 81, prTitle: 'Auth fix', headRef: 'fix', baseRef: 'main',
+      repoOwner: 'o', repoName: 'r', installationId: 1,
+      mergedAt: '2026-06-26T00:00:00Z', mergedBy: 'sahil',
+    };
+    await processMergedPR(event); // swallows the per-PR error after reporting
+
+    const comment = mock(github.postComment).mock.calls.at(-1)?.[4] as string;
+    expect(comment).toBeDefined();
+    expect(comment).toMatch(/Failed/);
+    expect(comment).toContain('What went wrong');
+    expect(comment).not.toContain('ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ012345'); // scrubbed
   });
 });

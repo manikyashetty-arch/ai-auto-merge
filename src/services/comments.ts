@@ -1,5 +1,6 @@
 import { ResolvedFile, RunUsage, TriggerInfo } from '../types';
 import { formatTokens, formatUsd, totalTokens } from '../utils/pricing';
+import { scrubSecrets } from '../utils/logger';
 
 /**
  * All PR comment bodies live here so prProcessor stays focused on flow.
@@ -179,17 +180,24 @@ export function buildSkippedComment(reason: string, trigger: TriggerInfo): strin
   ].join('\n');
 }
 
-export function buildErrorComment(trigger: TriggerInfo): string {
-  return [
+export function buildErrorComment(trigger: TriggerInfo, reason?: string): string {
+  const lines = [
     `## 🤖 AI Merge Conflict Resolution — Failed`,
     ``,
-    `An unexpected error occurred while resolving conflicts ${describeTrigger(trigger)}. The branch was left untouched.`,
+    `An unexpected error occurred while resolving conflicts ${describeTrigger(trigger)}. The branch was left untouched — nothing was changed or pushed.`,
     ``,
-    `Check the ai-auto-merge server logs for details, then retry with \`/ai-merge resolve\`.`,
+  ];
+  if (reason && reason.trim()) {
+    // Scrub before showing: git errors can carry the auth header.
+    lines.push(`**What went wrong:**`, '```', scrubSecrets(reason).trim().slice(0, 500), '```', ``);
+  }
+  lines.push(
+    `This is often transient (a timeout or API hiccup). Retry with \`/ai-merge resolve\`; if it persists, check the ai-auto-merge server logs.`,
     ``,
     '---',
-    FOOTER_LINK,
-  ].join('\n');
+    FOOTER_LINK
+  );
+  return lines.join('\n');
 }
 
 export function buildStatusComment(input: {

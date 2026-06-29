@@ -165,14 +165,16 @@ async function resolveConflictsForPR(
         'Branch changed during resolution — left your changes untouched').catch(() => undefined);
       return;
     }
-    finishRun(run, 'error', err instanceof Error ? err.message : String(err));
+    const reason = err instanceof Error ? err.message : String(err);
+    finishRun(run, 'error', reason);
     logger.error(`PR #${pr.number}: unexpected error during resolution:`, err);
     await createCommitStatus(octokit, pr.repoOwner, pr.repoName, pr.headSha, 'error',
       'AI conflict resolution failed unexpectedly').catch(() => undefined);
-    if (trigger.kind === 'manual') {
-      await postComment(octokit, pr.repoOwner, pr.repoName, pr.number, buildErrorComment(trigger))
-        .catch(() => undefined);
-    }
+    // Always tell the PR what happened — including merge-triggered runs, which
+    // previously got only the terse commit status and no explanation. The reason
+    // is scrubbed of secrets inside buildErrorComment before it is posted.
+    await postComment(octokit, pr.repoOwner, pr.repoName, pr.number, buildErrorComment(trigger, reason))
+      .catch(() => undefined);
     throw err;
   }
 }
